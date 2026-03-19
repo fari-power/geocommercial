@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.DS_Store
+*.log
+.venv/
+__pycache__/
+*.pyc
+synced_ids.txt
+tsc_errors.txt
+sync_inventory.json

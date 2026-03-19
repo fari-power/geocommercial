@@ -1,0 +1,6 @@
+<svg width="200" height="60" viewBox="0 0 200 60" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="30" cy="30" r="18" fill="#1e3a8a"/>
+  <path d="M30 15 L40 30 L30 45 L20 30 Z" fill="white"/>
+  <text x="60" y="35" font-family="Arial, sans-serif" font-size="16" font-weight="600" fill="#1e3a8a">Redmac</text>
+  <text x="60" y="50" font-family="Arial, sans-serif" font-size="12" fill="#64748b">Consulting</text>
+</svg>

@@ -186,7 +186,12 @@ ${dataContext}
 - **Gérez l'inconnu** : Si une information précise manque, n'hésite pas à faire une estimation basée sur tes connaissances générales du commerce au Maroc tout en précisant que c'est une analyse contextuelle.
 - **Engagement** : Termine souvent par une question ouverte ou une suggestion pour approfondir l'analyse (ex: "Souhaitez-vous que je compare ces chiffres avec une autre ville ?").`;
 
-        const chatResponse = await client.chat.complete({
+        // Set up streaming headers
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+
+        const chatStream = await client.chat.stream({
             model: "mistral-large-latest",
             messages: [
                 { role: "system", content: systemPrompt },
@@ -195,13 +200,24 @@ ${dataContext}
             ],
         });
 
-        res.json({
-            content: chatResponse.choices?.[0]?.message?.content || "Je n'ai pas pu générer de réponse.",
-            isLocal: false
-        });
+        for await (const chunk of chatStream) {
+            const content = chunk.data.choices[0]?.delta?.content || "";
+            if (content) {
+                res.write(`data: ${JSON.stringify({ content })}\n\n`);
+            }
+        }
 
-    } catch (error) {
+        res.write('data: [DONE]\n\n');
+        res.end();
+
+    } catch (error: any) {
         console.error('Erreur Chat AI:', error);
-        res.status(500).json({ message: "Erreur lors de la communication avec l'IA" });
+        // If headers are already sent, we can't send a JSON error
+        if (!res.headersSent) {
+            res.status(500).json({ message: "Erreur lors de la communication avec l'IA" });
+        } else {
+            res.write(`data: ${JSON.stringify({ error: "Erreur de flux" })}\n\n`);
+            res.end();
+        }
     }
 };

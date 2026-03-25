@@ -11,7 +11,16 @@ import Collect from './pages/app/Collect';
 import Settings from './pages/app/Settings';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-    const { isAuthenticated } = useAuth();
+    const { isAuthenticated, isInitialLoading } = useAuth();
+    
+    if (isInitialLoading) {
+        return (
+            <div className="flex items-center justify-center min-h-screen bg-[#0A0A0B]">
+                <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+            </div>
+        );
+    }
+    
     return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />;
 }
 

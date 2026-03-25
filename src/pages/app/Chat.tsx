@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { usePointsOfSale } from '../../hooks/usePointsOfSale';
-import { Send, Lightbulb, HelpCircle } from 'lucide-react';
+import { Send, Lightbulb, HelpCircle, Loader2 } from 'lucide-react';
 
 interface Message {
     id: string;
@@ -10,25 +9,24 @@ interface Message {
 }
 
 const suggestions = [
-    'Combien de points dans une ville ?',
-    'Top catégories',
-    'Zones sous-couvertes',
-    'Répartition formel vs informel',
+    'Combien de points avons-nous au total ?',
+    'Quelle est la ville avec le plus de commerces ?',
+    'Répartition du formel vs informel',
+    'Donne-moi le top 10 des catégories',
 ];
 
 export default function Chat() {
-    const { data: pointsOfSale } = usePointsOfSale();
     const [messages, setMessages] = useState<Message[]>([
         {
             id: '1',
             role: 'assistant',
             content:
-                'Bonjour. Je suis votre assistant pour explorer le référentiel commercial du Maroc. Posez-moi vos questions sur les points de vente, les régions, ou les catégories.',
+                'Bonjour ! Je suis votre assistant expert GeoCommercial. Posez-moi vos questions sur les points de vente, les villes ou les tendances du marché au Maroc.',
             timestamp: new Date(),
         },
     ]);
     const [input, setInput] = useState('');
-    const [explainMode, setExplainMode] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     const scrollToBottom = () => {
@@ -39,9 +37,9 @@ export default function Chat() {
         scrollToBottom();
     }, [messages]);
 
-    const handleSendMessage = (text?: string) => {
+    const handleSendMessage = async (text?: string) => {
         const messageText = text || input;
-        if (!messageText.trim()) return;
+        if (!messageText.trim() || isLoading) return;
 
         const userMessage: Message = {
             id: Date.now().toString(),
@@ -52,118 +50,110 @@ export default function Chat() {
 
         setMessages((prev) => [...prev, userMessage]);
         setInput('');
+        setIsLoading(true);
 
-        setTimeout(() => {
-            const response = generateResponse(messageText.toLowerCase());
-            const assistantMessage: Message = {
-                id: (Date.now() + 1).toString(),
-                role: 'assistant',
-                content: response,
-                timestamp: new Date(),
-            };
-            setMessages((prev) => [...prev, assistantMessage]);
-        }, 500);
-    };
+        const assistantMessageId = (Date.now() + 1).toString();
+        const assistantMessage: Message = {
+            id: assistantMessageId,
+            role: 'assistant',
+            content: '',
+            timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, assistantMessage]);
 
-    const generateResponse = (query: string): string => {
-        const formalCount = pointsOfSale.filter((p) => p.isFormal).length;
-        const informalCount = pointsOfSale.length - formalCount;
+        try {
+            const response = await fetch('http://localhost:3001/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    message: messageText,
+                    history: messages.slice(-6).map(m => ({ role: m.role, content: m.content })) 
+                })
+            });
 
-        const categoryCount = pointsOfSale.reduce((acc, p) => {
-            acc[p.category] = (acc[p.category] || 0) + 1;
-            return acc;
-        }, {} as Record<string, number>);
+            if (!response.ok) throw new Error('Erreur réseau');
 
-        const topCategories = Object.entries(categoryCount)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 3);
+            const reader = response.body?.getReader();
+            const decoder = new TextDecoder();
+            let fullContent = '';
 
-        // Determine city mentioned in query by matching known cities from the dataset
-        const cities = Array.from(new Set(pointsOfSale.map(p => p.city))).filter(Boolean);
-        // Match longest city name first to avoid partial matches
-        cities.sort((a, b) => b.length - a.length);
-        const lowerQuery = query.toLowerCase();
-        const matchedCity = cities.find(c => lowerQuery.includes(c.toLowerCase()));
+            if (reader) {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
 
-        let response = '';
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
 
-        if (matchedCity) {
-            const cityPoints = pointsOfSale.filter((p) => p.city.toLowerCase() === matchedCity.toLowerCase()).length;
-            response = `Il y a **${cityPoints} points de vente** à ${matchedCity} dans notre base.`;
-            if (explainMode) {
-                response += '\n\n_Source : filtrage par ville dans le dataset CSV_';
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = line.slice(6).trim();
+                            if (data === '[DONE]') break;
+                            
+                            try {
+                                const parsed = JSON.parse(data);
+                                if (parsed.content) {
+                                    fullContent += parsed.content;
+                                    setMessages((prev) => 
+                                        prev.map((msg) => 
+                                            msg.id === assistantMessageId 
+                                                ? { ...msg, content: fullContent } 
+                                                : msg
+                                        )
+                                    );
+                                }
+                            } catch (e) {
+                                // Silent catch
+                            }
+                        }
+                    }
+                }
             }
-        } else if (query.includes('zone') || query.includes('couvert')) {
-            // Provide a short coverage summary with top cities
-            const byCity = pointsOfSale.reduce((acc, p) => {
-                acc[p.city] = (acc[p.city] || 0) + 1;
-                return acc;
-            }, {} as Record<string, number>);
-            const topCities = Object.entries(byCity)
-                .sort((a, b) => b[1] - a[1])
-                .slice(0, 5)
-                .map(c => `${c[0]} (${c[1]})`)
-                .join(', ');
-
-            response = `Couverture par ville (top 5) : ${topCities}. Total points dans le dataset : **${pointsOfSale.length}**.`;
-            if (explainMode) {
-                response += '\n\n_Source : agrégation par ville du fichier CSV_';
-            }
-        } else if (query.includes('formel') || query.includes('informel')) {
-            const formalPercent = pointsOfSale.length === 0 ? '0.0' : ((formalCount / pointsOfSale.length) * 100).toFixed(1);
-            const informalPercent = pointsOfSale.length === 0 ? '0.0' : ((informalCount / pointsOfSale.length) * 100).toFixed(1);
-            response = `Sur **${pointsOfSale.length} points**, **${formalPercent}%** sont formels (${formalCount}) et **${informalPercent}%** informels (${informalCount}).`;
-            if (explainMode) {
-                response += '\n\n_Source : champ "Statut" du dataset CSV_';
-            }
-        } else if (query.includes('catégorie') || query.includes('top')) {
-            response = `Les catégories principales sont : ${topCategories
-                .map((t) => `**${t[0]}** (${t[1]} points)`)
-                .join(', ')}.`;
-            if (explainMode) {
-                response += '\n\n_Source : agrégation par catégorie du CSV_';
-            }
-        } else {
-            response = `Désolé, je n'ai pas compris votre question. Essayez des questions comme "Combien de points dans une ville ?" ou "Top catégories".`;
+        } catch (error) {
+            console.error('Chat error:', error);
+            setMessages((prev) => 
+                prev.map((msg) => 
+                    msg.id === assistantMessageId 
+                        ? { ...msg, content: "Désolé, je rencontre une difficulté pour répondre. Vérifiez que le serveur backend est bien lancé." } 
+                        : msg
+                )
+            );
+        } finally {
+            setIsLoading(false);
         }
-
-        return response;
-    };
-
-    const handleSuggestion = (suggestion: string) => {
-        handleSendMessage(suggestion);
     };
 
     return (
         <div className="h-[calc(100vh-4rem)] flex flex-col bg-white">
             {/* Header */}
-            <div className="p-4 border-b border-slate-200 flex items-center justify-between">
-                <h2 className="font-semibold text-slate-900">Chatbot</h2>
-                <button
-                    onClick={() => setExplainMode(!explainMode)}
-                    className={`flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg transition-colors ${explainMode
-                        ? 'bg-accent text-white'
-                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                        }`}
-                >
-                    <Lightbulb className="w-4 h-4" />
-                    Explain mode
-                </button>
+            <div className="p-4 border-b border-slate-200 flex items-center justify-between bg-white/80 backdrop-blur-md sticky top-0 z-10">
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-accent/10 flex items-center justify-center">
+                        <img src="/images/chatbot_avatar.png" alt="AI" className="w-6 h-6 object-contain" onError={(e) => e.currentTarget.style.display='none'} />
+                    </div>
+                    <div>
+                        <h2 className="font-bold text-slate-900">Assistant IA GeoCommercial</h2>
+                        <span className="text-xs text-green-500 flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                            Expert en ligne
+                        </span>
+                    </div>
+                </div>
             </div>
 
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-50/30">
                 {messages.map((message) => (
                     <div
                         key={message.id}
                         className={`flex items-start gap-3 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}
                     >
                         {message.role === 'assistant' && (
-                            <div className="flex-shrink-0 w-8 h-8 rounded-full overflow-hidden border border-slate-200 bg-white">
+                            <div className="flex-shrink-0 w-10 h-10 rounded-full overflow-hidden border border-slate-200 bg-white flex items-center justify-center p-1">
                                 <img
                                     src="/images/chatbot_avatar.png"
                                     alt="Assistant"
-                                    className="w-full h-full object-cover"
+                                    className="w-full h-full object-contain"
                                     onError={(e) => {
                                         e.currentTarget.src = 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=200&h=200';
                                     }}
@@ -172,12 +162,19 @@ export default function Chat() {
                         )}
 
                         <div
-                            className={`max-w-xl px-4 py-3 rounded-2xl shadow-sm ${message.role === 'user'
+                            className={`max-w-[80%] px-5 py-3 rounded-2xl shadow-sm ${message.role === 'user'
                                 ? 'bg-accent text-white rounded-tr-none'
                                 : 'bg-white border border-slate-100 text-slate-700 rounded-tl-none'
-                                }`}
+                                } animate-in fade-in slide-in-from-bottom-2 duration-300`}
                         >
-                            <div className="text-sm whitespace-pre-line leading-relaxed">{message.content}</div>
+                            <div className="text-[15px] whitespace-pre-line leading-relaxed prose prose-slate">
+                                {message.content || (isLoading && message.id === messages[messages.length-1].id ? (
+                                    <div className="flex items-center gap-2 text-slate-400 italic">
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                        L'IA réfléchit...
+                                    </div>
+                                ) : null)}
+                            </div>
                         </div>
                     </div>
                 ))}
@@ -185,18 +182,18 @@ export default function Chat() {
             </div>
 
             {/* Suggestions */}
-            {messages.length === 1 && (
-                <div className="px-6 pb-4">
-                    <div className="flex items-center gap-2 mb-3 text-sm text-slate-600">
+            {messages.length === 1 && !isLoading && (
+                <div className="px-6 pb-4 bg-slate-50/30">
+                    <div className="flex items-center gap-2 mb-3 text-sm text-slate-500 font-medium">
                         <HelpCircle className="w-4 h-4" />
-                        <span>Suggestions</span>
+                        <span>Questions fréquentes</span>
                     </div>
                     <div className="flex flex-wrap gap-2">
                         {suggestions.map((suggestion) => (
                             <button
                                 key={suggestion}
-                                onClick={() => handleSuggestion(suggestion)}
-                                className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-sm text-slate-700 rounded-lg transition-colors"
+                                onClick={() => handleSendMessage(suggestion)}
+                                className="px-4 py-2 bg-white border border-slate-200 hover:border-accent hover:text-accent text-sm text-slate-700 rounded-xl transition-all shadow-sm"
                             >
                                 {suggestion}
                             </button>
@@ -206,26 +203,27 @@ export default function Chat() {
             )}
 
             {/* Input */}
-            <div className="p-4 border-t border-slate-200">
+            <div className="p-4 bg-white border-t border-slate-200">
                 <form
                     onSubmit={(e) => {
                         e.preventDefault();
                         handleSendMessage();
                     }}
-                    className="flex gap-2"
+                    className="flex gap-3 max-w-4xl mx-auto"
                 >
                     <input
                         type="text"
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
-                        placeholder="Posez votre question..."
-                        className="flex-1 px-4 py-3 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
+                        placeholder="Posez votre question sur les données..."
+                        className="flex-1 px-5 py-3 bg-slate-100 border-none rounded-2xl focus:outline-none focus:ring-2 focus:ring-accent/50 transition-all"
                     />
                     <button
                         type="submit"
-                        className="px-6 py-3 bg-accent text-white rounded-lg hover:bg-accent-dark transition-colors flex items-center gap-2"
+                        disabled={!input.trim() || isLoading}
+                        className="px-6 py-3 bg-accent text-white rounded-2xl hover:bg-accent-dark transition-all flex items-center gap-2 disabled:opacity-50 shadow-lg shadow-accent/20"
                     >
-                        <Send className="w-4 h-4" />
+                        {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
                     </button>
                 </form>
             </div>

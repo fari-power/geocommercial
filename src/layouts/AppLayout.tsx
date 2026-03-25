@@ -93,8 +93,8 @@ export default function AppLayout() {
                         </div>
                         {isSidebarOpen && (
                             <div className="flex-1 min-w-0">
-                                <p className="text-xs font-semibold text-slate-700 truncate">Utilisateur</p>
-                                <p className="text-xs text-slate-500 truncate">{user?.email}</p>
+                                <p className="text-xs font-semibold text-slate-700 truncate">{user?.role === 'admin' ? 'Administrateur' : 'Agent Terrain'}</p>
+                                <p className="text-xs text-slate-500 truncate">{user?.email || user?.phone_number || user?.phone || 'Utilisateur'}</p>
                             </div>
                         )}
                     </div>
